@@ -95,7 +95,7 @@ class Viewer(object):
                     ):
                         pass
                     with tag('div', klass='container-fluid'):
-                        vidlst = [basename(f) for f in listdir(abspath(VID_FOLDER))]
+                        vidlst = [ basename(f) for f in listdir(abspath(VID_FOLDER)) if f[-4:] == '.mp4' ]
                         while len(vidlst):
                             with tag('div', klass='row'):
                                 rlst = vidlst[:6]
@@ -105,9 +105,24 @@ class Viewer(object):
                                     if idata is not None:
                                         with tag('div', klass='col-sm-2'):
                                             with tag('a', href=f'/vvid?video={fname}'):
-                                                doc.stag('img', klass='img-thumbnail rounded mx-auto', src=f'data:image/png;base64,{idata[0]}')
+                                                doc.stag('img', klass='img-thumbnail rounded mx-auto px-2 py-2', src=f'data:image/png;base64,{idata[0]}')
+                        with tag('div', klass='row'):
+                            with tag('div', klass='col-lg-5'):
+                                pass
+                            with tag('div', klass='col-lg-2'):
+                                with tag('div', klass='text-center'):
+                                    with tag('a', klass='btn btn-primary text-center my-2 mx-1', role='button', href='/refresh'):
+                                        text('Refresh')
+                            with tag('div', klass='col-lg-5'):
+                                pass
+
         return indent(doc.getvalue())
-    
+
+    @cherrypy.expose
+    def refresh(self):
+        self._update_thumbnails()
+        raise cherrypy.HTTPRedirect('/')
+
     @cherrypy.expose
     def vvid(self, video : str = 'None') -> str:
         doc, tag, text = Doc().tagtext()
@@ -132,7 +147,7 @@ class Viewer(object):
                 )
             with tag('body', style='background-color: #c0c0c0;'):
                 with tag('div', klass='container-fluid'):
-                    if video != 'None' and all(v in [basename(f) for f in listdir(abspath(VID_FOLDER))] for v in [video, f'{video[:-4]}.webm']):
+                    if video != 'None' and all(v in [basename(f) for f in listdir(abspath(VID_FOLDER))] for v in [video]):
                         with tag(
                             'script',
                             src = 'js/bootstrap.bundle.min.js',
@@ -153,18 +168,33 @@ class Viewer(object):
                                     preload='auto'
                                 ):
                                     doc.stag('source', src=f'/vid/{video}', type='video/mp4')
-                                    doc.stag('source', src=f'/vid/{video[:-4]}.webm', type='video/webm')
+                                    # doc.stag('source', src=f'/vid/{video[:-4]}.webm', type='video/webm')
                                 with tag(
                                     'script',
                                     src = '/js/video.min.js',
                                     integrity = f'sha384-{self.hashes["js"]["video.min.js"]}'
                                 ):
                                     pass
+                                with tag(
+                                    'script',
+                                    src = '/js/videojs.hotkeys.min.js',
+                                    integrity = f'sha384-{self.hashes["js"]["videojs.hotkeys.min.js"]}'
+                                ):
+                                    pass
                                 with tag('script'):
                                     text('''
-var player = videojs('curr-video');
+var player = videojs('curr-video', {
+    plugins: {
+        hotkeys: {
+            volumeStep: 0.1,
+            seekStep: 5,
+            enableModifiersForNumbers: false,
+        },
+    },
+});
 player.fluid(true);
-player.aspectRatio('16:9');''')
+player.aspectRatio('16:9');
+''')
                             with tag('div', klass='col-lg-1'):
                                 pass
                     else:
