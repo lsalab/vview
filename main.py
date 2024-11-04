@@ -95,7 +95,7 @@ class Viewer(object):
                     ):
                         pass
                     with tag('div', klass='container-fluid'):
-                        vidlst = [ basename(f) for f in listdir(abspath(VID_FOLDER)) if f[-4:] == '.mp4' ]
+                        vidlst = sorted( basename(f) for f in listdir(abspath(VID_FOLDER)) if f[-4:] == '.mp4' )
                         while len(vidlst):
                             with tag('div', klass='row'):
                                 rlst = vidlst[:6]
