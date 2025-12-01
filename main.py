@@ -3,8 +3,18 @@
 import cherrypy
 import ffmpeg
 from base64 import b64encode
-from Crypto.Hash import SHA384
 from io import BytesIO
+try:
+    from Crypto.Hash import SHA384
+except ImportError:
+    try:
+        from Cryptodome.Hash import SHA384
+    except ImportError:
+        import hashlib
+        class SHA384:
+            @staticmethod
+            def new(data):
+                return hashlib.sha384(data)
 from mimetypes import guess_type
 from os import mkdir, access, listdir, R_OK, W_OK, X_OK
 from os.path import abspath, exists, isdir, basename, getsize
@@ -225,7 +235,6 @@ def main():
     elif not access(VID_FOLDER, R_OK | W_OK | X_OK):
         perr(f'ERROR: Insufficient privileges on {VID_FOLDER}')
         exit(2)
-    # vid folder OK. Continue
     # Check static folders
     if not exists(JS_FOLDER) or not isdir(JS_FOLDER):
         perr(f'ERROR: Missing {JS_FOLDER} folder.')
@@ -233,7 +242,6 @@ def main():
     if not exists(CSS_FOLDER) or not isdir(CSS_FOLDER):
         perr(f'ERROR: Missing {CSS_FOLDER} folder.')
         exit(4)
-    # Statics OK. Continue
     # Configure and launch app
     app : Viewer = Viewer()
     app_config : dict = dict()
@@ -248,6 +256,7 @@ def main():
     app_config['/vid']['tools.staticdir.dir'] = abspath(VID_FOLDER)
 
     cherrypy.tree.mount(app, '/', app_config)
+    cherrypy.config.update({'server.socket_host': '0.0.0.0'})
     cherrypy.engine.subscribe('stop', app.stop)
     cherrypy.engine.start()
     cherrypy.engine.block()
