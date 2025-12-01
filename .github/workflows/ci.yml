@@ -30,6 +30,20 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
     
+    - name: Make system Python packages available
+      run: |
+        # Add system Python's site-packages to PYTHONPATH so python3-av is available
+        # Get the system Python's site-packages directory
+        SYSTEM_SITE=$(/usr/bin/python3 -c "import site; print(':'.join(site.getsitepackages()))" 2>/dev/null || echo "/usr/lib/python3/dist-packages")
+        # Add to PYTHONPATH if not already there
+        if [ -n "${PYTHONPATH}" ]; then
+          echo "PYTHONPATH=${SYSTEM_SITE}:${PYTHONPATH}" >> $GITHUB_ENV
+        else
+          echo "PYTHONPATH=${SYSTEM_SITE}" >> $GITHUB_ENV
+        fi
+        # Verify av is importable
+        python -c "import av; print(f'PyAV version: {av.__version__}')" || (echo "ERROR: Cannot import av module" && exit 1)
+    
     - name: Run tests
       run: |
         pytest
