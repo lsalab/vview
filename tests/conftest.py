@@ -54,27 +54,41 @@ def mock_db_path(temp_dir):
 
 
 @pytest.fixture
-def mock_ffmpeg_probe():
-    """Mock ffmpeg.probe response."""
-    return {
-        'streams': [
-            {
-                'codec_type': 'video',
-                'width': '1920',
-                'height': '1080',
-                'r_frame_rate': '30/1'
-            }
-        ]
-    }
+def mock_av_container():
+    """Mock PyAV container and video stream."""
+    from unittest.mock import MagicMock
+    
+    # Mock video stream
+    mock_stream = MagicMock()
+    mock_stream.width = 1920
+    mock_stream.height = 1080
+    mock_stream.average_rate = 30.0
+    mock_stream.time_base = MagicMock()
+    mock_stream.duration = None
+    
+    # Mock frame
+    mock_frame = MagicMock()
+    mock_frame.time = 60.0
+    mock_img = MagicMock()
+    mock_frame.to_image.return_value = mock_img
+    
+    # Mock container
+    mock_container = MagicMock()
+    mock_container.streams.video = [mock_stream]
+    mock_container.duration = None
+    mock_container.seek = MagicMock()
+    mock_container.decode.return_value = iter([mock_frame])
+    mock_container.close = MagicMock()
+    
+    return mock_container
 
 
 @pytest.fixture
-def mock_ffmpeg_output():
-    """Mock ffmpeg output (raw frame data)."""
-    # Create a mock RGB24 frame (1920x1080x3 bytes)
-    width, height = 1920, 1080
-    frame_size = width * height * 3
-    return (b'\x00' * frame_size, b'')
+def mock_av_open(mock_av_container):
+    """Mock PyAV's av.open() function."""
+    from unittest.mock import patch
+    with patch('av.open', return_value=mock_av_container) as mock_open:
+        yield mock_open
 
 
 @pytest.fixture

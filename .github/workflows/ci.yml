@@ -6,33 +6,33 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        sudo apt-get install -y python3-av python3-pip python3-venv
+    
+    - name: Check Python version
+      run: |
+        python3 --version
+        python3 -c "import sys; assert sys.version_info >= (3, 11), 'Python 3.11+ required'"
     
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
+        python3 -m pip install --upgrade pip
+        python3 -m pip install -r requirements.txt
+        python3 -m pip install -r requirements-test.txt
+    
+    - name: Verify PyAV is available
+      run: |
+        python3 -c "import av; print(f'PyAV version: {av.__version__}')" || (echo "ERROR: Cannot import av module" && exit 1)
     
     - name: Run tests
       run: |
-        pytest
+        python3 -m pytest
 
   lint:
     runs-on: ubuntu-latest

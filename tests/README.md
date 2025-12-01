@@ -81,8 +81,8 @@ Shared pytest fixtures for test setup:
 - `mock_js_folder` - Mock JS folder with test files
 - `mock_vid_folder` - Mock video folder
 - `mock_db_path` - Temporary database path
-- `mock_ffmpeg_probe` - Mock ffmpeg.probe response
-- `mock_ffmpeg_output` - Mock ffmpeg output data
+- `mock_av_container` - Mock PyAV container and video stream
+- `mock_av_open` - Mock PyAV's av.open() function
 - `sample_video_files` - Sample video files for testing
 
 ## Test Coverage
@@ -99,7 +99,7 @@ The test suite covers:
 - Tests use mocking extensively to avoid dependencies on:
   - File system operations
   - Database connections
-  - FFmpeg operations
+  - PyAV (video processing) operations
   - CherryPy server
 - All external dependencies are mocked to ensure tests run quickly and reliably
 
