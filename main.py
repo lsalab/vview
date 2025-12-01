@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import cherrypy
-import ffmpeg
+import av
 from base64 import b64encode
 from io import BytesIO
 try:
@@ -67,19 +67,34 @@ class Viewer(object):
             for fname in filenames:
                 if fname not in metanames and fname[-4:] == '.mp4':
                     fname = f'{abspath(VID_FOLDER)}/{fname}'
-                    vprobe = ffmpeg.probe(fname)
-                    vstream = next((s for s in vprobe['streams'] if s['codec_type'] == 'video'), None)
-                    width = int(vstream['width'])
-                    height = int(vstream['height'])
-                    frate = int(eval(vstream['r_frame_rate']))
-                    raw_frame, _ = (ffmpeg.input(fname).filter('select', f'gte(n, {THUMBNAIL_TIME * frate})').output('pipe:', vframes=1, format='rawvideo', pix_fmt='rgb24').run(capture_stdout=True, capture_stderr=True))
-                    img = Image.frombytes('RGB', (width, height), raw_frame, 'raw')
+                    # Use PyAV to get video properties and extract frame
+                    container = av.open(fname)
+                    video_stream = container.streams.video[0]
+                    width = video_stream.width
+                    height = video_stream.height
+                    frate = int(video_stream.average_rate) if video_stream.average_rate else 30
+                    
+                    # Seek to THUMBNAIL_TIME seconds
+                    seek_pts = int(THUMBNAIL_TIME * 1000000)
+                    container.seek(seek_pts)
+                    
+                    # Get the first frame after seeking
+                    frame = None
+                    for frame in container.decode(video=0):
+                        break
+                    
+                    if frame is None:
+                        continue
+                    
+                    # Convert frame to PIL Image
+                    img = frame.to_image()
                     img = img.resize( ( int( ( THUMBNAIL_HEIGHT / height ) * width ), int( ( THUMBNAIL_HEIGHT / height ) * height ) ) )
                     with BytesIO() as tnout:
                         img.save(tnout, format='PNG')
                         img = b64encode(tnout.getbuffer()).decode(encoding='utf-8')
                         cur.execute(f'''INSERT INTO thumbnails(file, img) VALUES ('{basename(fname):s}', '{img:s}')''')
                         con.commit()
+                    container.close()
 
     @cherrypy.expose
     def index(self) -> str:
@@ -136,6 +151,90 @@ class Viewer(object):
         raise cherrypy.HTTPRedirect('/')
 
     @cherrypy.expose
+    def thumbnail(self, video: str = None, time: float = 0.0):
+        """Generate and return a thumbnail for a video at a specific timestamp.
+        
+        Args:
+            video: Name of the video file
+            time: Timestamp in seconds
+            
+        Returns:
+            PNG image data as binary response
+        """
+        if video is None:
+            raise cherrypy.HTTPError(400, "Missing video parameter")
+        
+        try:
+            time = float(time)
+        except (ValueError, TypeError):
+            raise cherrypy.HTTPError(400, "Invalid time parameter")
+        
+        # Validate video file exists and is in the video folder
+        video_path = f'{abspath(VID_FOLDER)}/{basename(video)}'
+        if not exists(video_path) or basename(video) not in [basename(f) for f in listdir(abspath(VID_FOLDER))]:
+            raise cherrypy.HTTPError(404, "Video not found")
+        
+        if not video_path.endswith('.mp4'):
+            raise cherrypy.HTTPError(400, "Invalid video format")
+        
+        try:
+            # Open video file with PyAV
+            container = av.open(video_path)
+            video_stream = container.streams.video[0]
+            
+            # Get video properties
+            width = video_stream.width
+            height = video_stream.height
+            
+            # Get duration in seconds
+            # PyAV duration is typically in microseconds (1/1000000 seconds)
+            if container.duration is not None:
+                duration = float(container.duration) / 1000000.0
+            elif video_stream.duration is not None:
+                # Use stream duration (in stream's time_base)
+                duration = float(video_stream.duration * video_stream.time_base)
+            else:
+                duration = 0.0
+            
+            # Clamp time to valid range
+            if duration > 0:
+                time = max(0.0, min(time, duration))
+            
+            # Seek to the specified time (PyAV seek uses microseconds)
+            seek_pts = int(time * 1000000)
+            container.seek(seek_pts)
+            
+            # Decode frames and get the first one after seeking
+            frame = None
+            for frame in container.decode(video=0):
+                # Take the first frame we get after seeking
+                break
+            
+            if frame is None:
+                raise cherrypy.HTTPError(500, "Could not extract frame at specified time")
+            
+            # Convert frame to PIL Image
+            img = frame.to_image()
+            
+            # Resize to reasonable thumbnail size (maintain aspect ratio)
+            thumbnail_width = 320
+            thumbnail_height = int((thumbnail_width / width) * height)
+            img = img.resize((thumbnail_width, thumbnail_height), Image.Resampling.LANCZOS)
+            
+            # Convert to PNG and return
+            with BytesIO() as output:
+                img.save(output, format='PNG')
+                output.seek(0)
+                cherrypy.response.headers['Content-Type'] = 'image/png'
+                cherrypy.response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                return output.read()
+                
+        except Exception as e:
+            error_msg = str(e)
+            perr(f'Error generating thumbnail: {error_msg}')
+            raise cherrypy.HTTPError(500, "Error generating thumbnail")
+
+    @cherrypy.expose
     def vvid(self, video : str = 'None') -> str:
         doc, tag, text = Doc().tagtext()
         doc.asis('<!DOCTYPE html>')
@@ -175,6 +274,7 @@ class Viewer(object):
                                     'controls',
                                     'autoplay',
                                     ('data-setup', '{}'),
+                                    ('data-video', video),
                                     klass='video-js',
                                     id='curr-video',
                                     preload='auto'
@@ -193,20 +293,12 @@ class Viewer(object):
                                     integrity = f'sha384-{self.hashes["js"]["videojs.hotkeys.min.js"]}'
                                 ):
                                     pass
-                                with tag('script'):
-                                    text('''
-var player = videojs('curr-video', {
-    plugins: {
-        hotkeys: {
-            volumeStep: 0.1,
-            seekStep: 5,
-            enableModifiersForNumbers: false,
-        },
-    },
-});
-player.fluid(true);
-player.aspectRatio('16:9');
-''')
+                                with tag(
+                                    'script',
+                                    src = '/js/custom-player.js',
+                                    integrity = f'sha384-{self.hashes["js"]["custom-player.js"]}'
+                                ):
+                                    pass
                             with tag('div', klass='col-lg-1'):
                                 pass
                     else:

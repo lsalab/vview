@@ -79,7 +79,7 @@ class TestViewerInit:
 class TestUpdateThumbnails:
     """Tests for Viewer._update_thumbnails method."""
 
-    @patch('main.ffmpeg')
+    @patch('main.av')
     @patch('main.Image')
     @patch('main.BytesIO')
     @patch('main.connect')
@@ -90,7 +90,7 @@ class TestUpdateThumbnails:
     @patch('main.SHA384')
     def test_update_thumbnails_removes_deleted_files(
         self, mock_sha384, mock_file, mock_basename, mock_abspath, mock_listdir, mock_connect,
-        mock_bytesio, mock_image, mock_ffmpeg
+        mock_bytesio, mock_image, mock_av
     ):
         """Test that _update_thumbnails removes metadata for deleted files."""
         # Setup basic mocks for Viewer init
@@ -110,16 +110,24 @@ class TestUpdateThumbnails:
         mock_hash.digest.return_value = b'test_digest'
         mock_sha384.new.return_value = mock_hash
         
-        # Mock ffmpeg to avoid AttributeError
-        mock_ffmpeg.probe.return_value = {
-            'streams': [{
-                'codec_type': 'video',
-                'width': '1920',
-                'height': '1080',
-                'r_frame_rate': '30/1'
-            }]
-        }
-        mock_ffmpeg.input.return_value.filter.return_value.output.return_value.run.return_value = (b'\x00' * (1920 * 1080 * 3), b'')
+        # Mock PyAV container and stream
+        mock_stream = MagicMock()
+        mock_stream.width = 1920
+        mock_stream.height = 1080
+        mock_stream.average_rate = 30.0
+        mock_stream.time_base = MagicMock()
+        mock_stream.duration = None
+        
+        mock_frame = MagicMock()
+        mock_frame.to_image.return_value = MagicMock()
+        
+        mock_container = MagicMock()
+        mock_container.streams.video = [mock_stream]
+        mock_container.duration = None
+        mock_container.seek = MagicMock()
+        mock_container.decode.return_value = iter([mock_frame])
+        mock_container.close = MagicMock()
+        mock_av.open.return_value = mock_container
         
         # Mock BytesIO for image saving
         mock_io = MagicMock()
@@ -160,7 +168,7 @@ class TestUpdateThumbnails:
                        if 'DELETE' in str(call)]
         assert len(delete_calls) > 0
 
-    @patch('main.ffmpeg')
+    @patch('main.av')
     @patch('main.Image')
     @patch('main.BytesIO')
     @patch('main.connect')
@@ -171,7 +179,7 @@ class TestUpdateThumbnails:
     @patch('main.SHA384')
     def test_update_thumbnails_creates_metadata_for_new_files(
         self, mock_sha384, mock_file, mock_basename, mock_abspath, mock_listdir, mock_connect,
-        mock_bytesio, mock_image, mock_ffmpeg
+        mock_bytesio, mock_image, mock_av
     ):
         """Test that _update_thumbnails creates metadata for new MP4 files."""
         # Setup basic mocks for Viewer init
@@ -198,20 +206,24 @@ class TestUpdateThumbnails:
         mock_con_init.cursor.return_value = mock_cur_init
         mock_connect.return_value.__enter__.return_value = mock_con_init
         
-        # Mock ffmpeg probe (needed during Viewer.__init__)
-        mock_ffmpeg.probe.return_value = {
-            'streams': [{
-                'codec_type': 'video',
-                'width': '1920',
-                'height': '1080',
-                'r_frame_rate': '30/1'
-            }]
-        }
+        # Mock PyAV container and stream (needed during Viewer.__init__)
+        mock_stream = MagicMock()
+        mock_stream.width = 1920
+        mock_stream.height = 1080
+        mock_stream.average_rate = 30.0
+        mock_stream.time_base = MagicMock()
+        mock_stream.duration = None
         
-        # Mock ffmpeg input/output
-        mock_output = MagicMock()
-        mock_output.run.return_value = (b'\x00' * (1920 * 1080 * 3), b'')
-        mock_ffmpeg.input.return_value.filter.return_value.output.return_value = mock_output
+        mock_frame = MagicMock()
+        mock_frame.to_image.return_value = MagicMock()
+        
+        mock_container = MagicMock()
+        mock_container.streams.video = [mock_stream]
+        mock_container.duration = None
+        mock_container.seek = MagicMock()
+        mock_container.decode.return_value = iter([mock_frame])
+        mock_container.close = MagicMock()
+        mock_av.open.return_value = mock_container
         
         # Mock PIL Image
         mock_img = MagicMock()
@@ -286,7 +298,7 @@ class TestUpdateThumbnails:
         
         viewer._update_thumbnails()
         
-        # Should not call ffmpeg for non-MP4 files
+        # Should not call av.open for non-MP4 files
         # (This is implicit - if it tried, it would fail without mocks)
 
 
@@ -432,19 +444,28 @@ class TestRefresh:
         mock_con_init.cursor.return_value = mock_cur_init
         mock_connect.return_value.__enter__.return_value = mock_con_init
         
-        # Mock ffmpeg to avoid AttributeError during init
-        mock_ffmpeg_module = MagicMock()
-        mock_ffmpeg_module.probe.return_value = {
-            'streams': [{
-                'codec_type': 'video',
-                'width': '1920',
-                'height': '1080',
-                'r_frame_rate': '30/1'
-            }]
-        }
-        mock_ffmpeg_module.input.return_value.filter.return_value.output.return_value.run.return_value = (b'\x00' * (1920 * 1080 * 3), b'')
+        # Mock PyAV to avoid AttributeError during init
+        mock_stream = MagicMock()
+        mock_stream.width = 1920
+        mock_stream.height = 1080
+        mock_stream.average_rate = 30.0
+        mock_stream.time_base = MagicMock()
+        mock_stream.duration = None
         
-        with patch('main.ffmpeg', mock_ffmpeg_module), \
+        mock_frame = MagicMock()
+        mock_frame.to_image.return_value = MagicMock()
+        
+        mock_container = MagicMock()
+        mock_container.streams.video = [mock_stream]
+        mock_container.duration = None
+        mock_container.seek = MagicMock()
+        mock_container.decode.return_value = iter([mock_frame])
+        mock_container.close = MagicMock()
+        
+        mock_av_module = MagicMock()
+        mock_av_module.open.return_value = mock_container
+        
+        with patch('main.av', mock_av_module), \
              patch('main.Image') as mock_image, \
              patch('main.BytesIO') as mock_bytesio:
             # Mock BytesIO and Image
