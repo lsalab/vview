@@ -199,13 +199,6 @@ class TestUpdateThumbnails:
         mock_hash.digest.return_value = b'test_digest'
         mock_sha384.new.return_value = mock_hash
         
-        # Mock for Viewer.__init__ database connection
-        mock_con_init = MagicMock()
-        mock_cur_init = MagicMock()
-        mock_cur_init.execute.return_value.fetchall.return_value = []
-        mock_con_init.cursor.return_value = mock_cur_init
-        mock_connect.return_value.__enter__.return_value = mock_con_init
-        
         # Mock PyAV container and stream (needed during Viewer.__init__)
         mock_stream = MagicMock()
         mock_stream.width = 1920
@@ -235,16 +228,53 @@ class TestUpdateThumbnails:
         mock_io.getbuffer.return_value = b'image_data'
         mock_bytesio.return_value.__enter__.return_value = mock_io
         
-        viewer = Viewer()
-        viewer.hashes = {'css': {}, 'js': {}}
+        # Set up mock_connect to return different connections for different calls
+        # First call: during Viewer.__init__
+        # Second call: during explicit _update_thumbnails() call
+        mock_con_init = MagicMock()
+        mock_cur_init = MagicMock()
+        # For init, SELECT returns empty, and we need to handle INSERT during init
+        def execute_init_side_effect(query):
+            mock_result = MagicMock()
+            if 'SELECT' in query:
+                mock_result.fetchall.return_value = []
+            return mock_result
+        mock_cur_init.execute.side_effect = execute_init_side_effect
+        mock_con_init.cursor.return_value = mock_cur_init
         
-        # Mock for _update_thumbnails database connection
+        # Second connection for explicit _update_thumbnails() call
         mock_con = MagicMock()
         mock_cur = MagicMock()
-        # First call: SELECT file FROM thumbnails (returns empty - no existing metadata)
-        mock_cur.execute.return_value.fetchall.return_value = []
+        # Set up execute to handle both SELECT and INSERT calls
+        def execute_side_effect(query):
+            mock_result = MagicMock()
+            if 'SELECT' in query:
+                mock_result.fetchall.return_value = []  # Empty - file not in database
+            elif 'INSERT' in query:
+                pass  # INSERT doesn't return fetchall
+            return mock_result
+        mock_cur.execute.side_effect = execute_side_effect
         mock_con.cursor.return_value = mock_cur
-        mock_connect.return_value.__enter__.return_value = mock_con
+        
+        # Make mock_connect return different connections for different calls
+        def connect_side_effect(*args, **kwargs):
+            mock_conn = MagicMock()
+            if not hasattr(connect_side_effect, 'call_count'):
+                connect_side_effect.call_count = 0
+            connect_side_effect.call_count += 1
+            if connect_side_effect.call_count == 1:
+                # First call: during Viewer.__init__
+                mock_conn.__enter__.return_value = mock_con_init
+            else:
+                # Subsequent calls: during explicit _update_thumbnails()
+                mock_conn.__enter__.return_value = mock_con
+            return mock_conn
+        
+        mock_connect.side_effect = connect_side_effect
+        
+        # Mock for Viewer.__init__ - first call processes the video during init
+        viewer = Viewer()
+        viewer.hashes = {'css': {}, 'js': {}}
         
         viewer._update_thumbnails()
         
@@ -539,7 +569,8 @@ class TestVvid:
             'js': {
                 'bootstrap.bundle.min.js': 'test_hash',
                 'video.min.js': 'test_hash',
-                'videojs.hotkeys.min.js': 'test_hash'
+                'videojs.hotkeys.min.js': 'test_hash',
+                'custom-player.js': 'test_hash'
             }
         }
         
