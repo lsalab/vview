@@ -1,12 +1,10 @@
 """Tests for utility functions in main.py."""
 
-import sys
 from io import StringIO
 from unittest.mock import patch, MagicMock
 import pytest
 
 # Import the function to test
-sys.path.insert(0, '/home/lsalab/.prn/vview')
 from main import perr
 
 

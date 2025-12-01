@@ -4,10 +4,6 @@ import os
 import sqlite3
 from unittest.mock import MagicMock, Mock, patch, mock_open
 import pytest
-import sys
-
-# Add the project root to the path
-sys.path.insert(0, '/home/lsalab/.prn/vview')
 
 from main import Viewer, THUMBNAIL_DB, THUMBNAIL_HEIGHT, THUMBNAIL_TIME
 
