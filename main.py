@@ -2,6 +2,7 @@
 
 import cherrypy
 import av
+import errno
 from base64 import b64encode
 from io import BytesIO
 try:
@@ -322,86 +323,80 @@ def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
     cherrypy.engine.exit()
 
-class FilteredStderr:
-    """Filter stderr to suppress harmless 'Bad file descriptor' errors during cleanup.
-    
-    These errors occur in cheroot's makefile cleanup when file descriptors
-    are closed during garbage collection. They are harmless and can be safely ignored.
-    """
-    def __init__(self, original_stderr):
-        self.original_stderr = original_stderr
-    
-    def write(self, message):
-        # Suppress "Exception ignored" messages containing "Bad file descriptor"
-        if 'Exception ignored' in message and 'Bad file descriptor' in message:
-            return
-        if 'OSError: [Errno 9] Bad file descriptor' in message:
-            return
-        self.original_stderr.write(message)
-    
-    def flush(self):
-        self.original_stderr.flush()
-    
-    def __getattr__(self, name):
-        return getattr(self.original_stderr, name)
+_original_unraisablehook = sys.unraisablehook
+
+def _is_cheroot_shutdown_bad_file_descriptor(unraisable):
+    """Return True for Cheroot socket cleanup noise emitted during shutdown."""
+    if unraisable.exc_type is not OSError:
+        return False
+    if getattr(unraisable.exc_value, "errno", None) != errno.EBADF:
+        return False
+
+    tb = unraisable.exc_traceback
+    while tb is not None:
+        filename = tb.tb_frame.f_code.co_filename
+        if filename.endswith("/cheroot/makefile.py"):
+            return True
+        tb = tb.tb_next
+
+    return False
+
+def filtered_unraisablehook(unraisable):
+    if _is_cheroot_shutdown_bad_file_descriptor(unraisable):
+        return
+    _original_unraisablehook(unraisable)
 
 def main():
-    # Filter stderr to suppress harmless cleanup errors
-    # These occur when cheroot's file descriptors are closed during garbage collection
-    original_stderr = sys.stderr
-    sys.stderr = FilteredStderr(original_stderr)
+    # Suppress harmless Cheroot cleanup errors raised from object finalizers.
+    sys.unraisablehook = filtered_unraisablehook
+    
+    # Check vid folder
+    if not exists(VID_FOLDER):
+        perr(f'WARNING: No {VID_FOLDER} folder. Creating ...')
+        mkdir(VID_FOLDER)
+    elif not isdir(VID_FOLDER):
+        perr(f'ERROR: {VID_FOLDER} is not a directory')
+        exit(1)
+    elif not access(VID_FOLDER, R_OK | W_OK | X_OK):
+        perr(f'ERROR: Insufficient privileges on {VID_FOLDER}')
+        exit(2)
+    # Check static folders
+    if not exists(JS_FOLDER) or not isdir(JS_FOLDER):
+        perr(f'ERROR: Missing {JS_FOLDER} folder.')
+        exit(3)
+    if not exists(CSS_FOLDER) or not isdir(CSS_FOLDER):
+        perr(f'ERROR: Missing {CSS_FOLDER} folder.')
+        exit(4)
+    # Configure and launch app
+    app : Viewer = Viewer()
+    app_config : dict = dict()
+    app_config['/js'] = dict()
+    app_config['/js']['tools.staticdir.on'] = True
+    app_config['/js']['tools.staticdir.dir'] = abspath(JS_FOLDER)
+    app_config['/css'] = dict()
+    app_config['/css']['tools.staticdir.on'] = True
+    app_config['/css']['tools.staticdir.dir'] = abspath(CSS_FOLDER)
+    app_config['/vid'] = dict()
+    app_config['/vid']['tools.staticdir.on'] = True
+    app_config['/vid']['tools.staticdir.dir'] = abspath(VID_FOLDER)
+
+    cherrypy.tree.mount(app, '/', app_config)
+    cherrypy.config.update({'server.socket_host': '0.0.0.0'})
+    cherrypy.engine.subscribe('stop', app.stop)
+    
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     try:
-        # Check vid folder
-        if not exists(VID_FOLDER):
-            perr(f'WARNING: No {VID_FOLDER} folder. Creating ...')
-            mkdir(VID_FOLDER)
-        elif not isdir(VID_FOLDER):
-            perr(f'ERROR: {VID_FOLDER} is not a directory')
-            exit(1)
-        elif not access(VID_FOLDER, R_OK | W_OK | X_OK):
-            perr(f'ERROR: Insufficient privileges on {VID_FOLDER}')
-            exit(2)
-        # Check static folders
-        if not exists(JS_FOLDER) or not isdir(JS_FOLDER):
-            perr(f'ERROR: Missing {JS_FOLDER} folder.')
-            exit(3)
-        if not exists(CSS_FOLDER) or not isdir(CSS_FOLDER):
-            perr(f'ERROR: Missing {CSS_FOLDER} folder.')
-            exit(4)
-        # Configure and launch app
-        app : Viewer = Viewer()
-        app_config : dict = dict()
-        app_config['/js'] = dict()
-        app_config['/js']['tools.staticdir.on'] = True
-        app_config['/js']['tools.staticdir.dir'] = abspath(JS_FOLDER)
-        app_config['/css'] = dict()
-        app_config['/css']['tools.staticdir.on'] = True
-        app_config['/css']['tools.staticdir.dir'] = abspath(CSS_FOLDER)
-        app_config['/vid'] = dict()
-        app_config['/vid']['tools.staticdir.on'] = True
-        app_config['/vid']['tools.staticdir.dir'] = abspath(VID_FOLDER)
-
-        cherrypy.tree.mount(app, '/', app_config)
-        cherrypy.config.update({'server.socket_host': '0.0.0.0'})
-        cherrypy.engine.subscribe('stop', app.stop)
-        
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
-        try:
-            cherrypy.engine.start()
-            cherrypy.engine.block()
-        except KeyboardInterrupt:
-            cherrypy.engine.exit()
-        finally:
-            # Ensure engine is stopped
-            if cherrypy.engine.state == cherrypy.engine.states.STARTED:
-                cherrypy.engine.exit()
+        cherrypy.engine.start()
+        cherrypy.engine.block()
+    except KeyboardInterrupt:
+        cherrypy.engine.exit()
     finally:
-        # Restore original stderr
-        sys.stderr = original_stderr
+        # Ensure engine is stopped
+        if cherrypy.engine.state == cherrypy.engine.states.STARTED:
+            cherrypy.engine.exit()
 
 if __name__ == '__main__':
     main()

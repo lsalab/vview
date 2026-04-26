@@ -5,7 +5,13 @@ import sqlite3
 from unittest.mock import MagicMock, Mock, patch, mock_open
 import pytest
 
-from main import Viewer, THUMBNAIL_DB, THUMBNAIL_HEIGHT, THUMBNAIL_TIME
+from main import (
+    Viewer,
+    THUMBNAIL_DB,
+    THUMBNAIL_HEIGHT,
+    THUMBNAIL_TIME,
+    _is_cheroot_shutdown_bad_file_descriptor,
+)
 
 
 class TestViewerInit:
@@ -717,4 +723,42 @@ class TestStop:
         mock_log.error.assert_called_once()
         call_args = mock_log.error.call_args
         assert 'Viewer Stopped!' in str(call_args)
+
+
+class TestUnraisableHook:
+    """Tests for shutdown cleanup exception filtering."""
+
+    def test_detects_cheroot_shutdown_bad_file_descriptor(self):
+        """Test that Cheroot EBADF cleanup errors are recognized."""
+        mock_code = Mock()
+        mock_code.co_filename = "/tmp/site-packages/cheroot/makefile.py"
+        mock_frame = Mock()
+        mock_frame.f_code = mock_code
+        mock_traceback = Mock()
+        mock_traceback.tb_frame = mock_frame
+        mock_traceback.tb_next = None
+
+        unraisable = Mock()
+        unraisable.exc_type = OSError
+        unraisable.exc_value = OSError(9, "Bad file descriptor")
+        unraisable.exc_traceback = mock_traceback
+
+        assert _is_cheroot_shutdown_bad_file_descriptor(unraisable)
+
+    def test_keeps_unrelated_bad_file_descriptor_errors(self):
+        """Test that unrelated EBADF errors are not suppressed."""
+        mock_code = Mock()
+        mock_code.co_filename = "/tmp/app.py"
+        mock_frame = Mock()
+        mock_frame.f_code = mock_code
+        mock_traceback = Mock()
+        mock_traceback.tb_frame = mock_frame
+        mock_traceback.tb_next = None
+
+        unraisable = Mock()
+        unraisable.exc_type = OSError
+        unraisable.exc_value = OSError(9, "Bad file descriptor")
+        unraisable.exc_traceback = mock_traceback
+
+        assert not _is_cheroot_shutdown_bad_file_descriptor(unraisable)
 
